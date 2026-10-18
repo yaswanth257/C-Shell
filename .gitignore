@@ -1,0 +1,22 @@
+# Object files
+*.o
+
+# Compiled executable
+shell.out
+
+# Other generated binaries
+*.out
+
+# Debug files
+*.gdb
+*.core
+
+# Test artifacts
+.test/
+
+# Backup directory
+shell_backup_full/
+
+# VS Code workspace settings
+.vscode/
+Testing.md
