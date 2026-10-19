@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "prompt.h"
+#include "parser.h"
 
 int main(void)
 {
@@ -31,8 +32,13 @@ int main(void)
         input[strcspn(input, "\n")] = '\0';
         if (strlen(input) == 0)
             continue;
+
+        if (parse_command(input) != 0)
+        {
+            printf("Invalid Syntax!\n");
+            continue;
+        }
     }
 
     return 0;
 }
-
