@@ -5,10 +5,14 @@
 #include <string.h>
 #include <limits.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <errno.h>
 
+#include "intrinsics.h"
 #include "prompt.h"
 #include "parser.h"
-#include "intrinsics.h"
+#include "executor.h"
 
 int tokenize_input_to_argv(char *input, char *argv[], int max_args)
 {
@@ -21,6 +25,179 @@ int tokenize_input_to_argv(char *input, char *argv[], int max_args)
     }
     argv[argc] = NULL;
     return argc;
+}
+
+void run_shell_command(char *cmd, const char *home_dir)
+{
+    char input_copy[MAX_CMD_LEN];
+    strncpy(input_copy, cmd, MAX_CMD_LEN);
+    input_copy[MAX_CMD_LEN - 1] = '\0';
+
+    char *argv[100];
+    int argc = tokenize_input_to_argv(input_copy, argv, 100);
+    if (argc == 0)
+        return;
+
+    int background = 0;
+    if (argc > 0 && strcmp(argv[argc - 1], "&") == 0)
+    {
+        background = 1;
+        argv[--argc] = NULL;
+    }
+
+    /* Validate input redirection target exists */
+    for (int i = 0; argv[i]; ++i)
+    {
+        if (strcmp(argv[i], "<") == 0)
+        {
+            if (!argv[i + 1] || access(argv[i + 1], R_OK) != 0)
+            {
+                printf("No such file or directory\n");
+                return;
+            }
+            i++;
+        }
+    }
+
+    /* Validate output redirection target is creatable */
+    for (int i = 0; argv[i]; ++i)
+    {
+        if (strcmp(argv[i], ">") == 0 || strcmp(argv[i], ">>") == 0)
+        {
+            if (!argv[i + 1])
+            {
+                printf("Invalid output redirection\n");
+                return;
+            }
+            int flags = O_WRONLY | O_CREAT | (strcmp(argv[i], ">>") == 0 ? O_APPEND : O_TRUNC);
+            int fd = open(argv[i + 1], flags, 0666);
+            if (fd < 0)
+            {
+                printf("Unable to create file for writing\n");
+                return;
+            }
+            close(fd);
+            i++;
+        }
+    }
+
+    char *input_file = NULL;
+    char *output_file = NULL;
+    int append = 0;
+
+    for (int i = 0; argv[i]; ++i)
+    {
+        if (strcmp(argv[i], "<") == 0)
+        {
+            input_file = argv[i + 1];
+            argv[i] = NULL;
+            argv[i + 1] = NULL;
+            i++;
+        }
+        else if (strcmp(argv[i], ">>") == 0)
+        {
+            output_file = argv[i + 1];
+            append = 1;
+            argv[i] = NULL;
+            argv[i + 1] = NULL;
+            i++;
+        }
+        else if (strcmp(argv[i], ">") == 0)
+        {
+            output_file = argv[i + 1];
+            append = 0;
+            argv[i] = NULL;
+            argv[i + 1] = NULL;
+            i++;
+        }
+    }
+
+    if (strcmp(argv[0], "hop") == 0)
+    {
+        hop_command(argc, argv, home_dir);
+        intrinsics_log_store_command(cmd);
+        return;
+    }
+
+    if (strcmp(argv[0], "reveal") == 0)
+    {
+        int saved_stdin = -1, saved_stdout = -1;
+
+        if (input_file)
+        {
+            int fd = open(input_file, O_RDONLY);
+            if (fd < 0)
+            {
+                printf("No such file or directory\n");
+                return;
+            }
+            saved_stdin = dup(STDIN_FILENO);
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+        }
+
+        if (output_file)
+        {
+            int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
+            int fd = open(output_file, flags, 0666);
+            if (fd < 0)
+            {
+                printf("Unable to create file for writing\n");
+                if (saved_stdin >= 0)
+                {
+                    dup2(saved_stdin, STDIN_FILENO);
+                    close(saved_stdin);
+                }
+                return;
+            }
+            saved_stdout = dup(STDOUT_FILENO);
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
+
+        reveal_command(argc, argv, home_dir);
+        fflush(stdout);
+
+        if (saved_stdin >= 0)
+        {
+            dup2(saved_stdin, STDIN_FILENO);
+            close(saved_stdin);
+        }
+        if (saved_stdout >= 0)
+        {
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+
+        intrinsics_log_store_command(cmd);
+        return;
+    }
+
+    if (strcmp(argv[0], "log") == 0)
+    {
+        log_command(argc, argv);
+        return;
+    }
+
+    /* External command — single command (no pipes yet) */
+    pid_t child_pid = execute_external_command(argv, input_file, output_file, append);
+    if (child_pid < 0)
+    {
+        fprintf(stderr, "Failed to execute command\n");
+        return;
+    }
+
+    if (background)
+    {
+        printf("[bg] %d\n", (int)child_pid);
+        fflush(stdout);
+    }
+    else
+    {
+        int status;
+        waitpid(child_pid, &status, 0);
+        intrinsics_log_store_command(cmd);
+    }
 }
 
 int main(void)
@@ -56,9 +233,8 @@ int main(void)
             strncpy(input_copy, input, sizeof(input_copy) - 1);
             input_copy[1023] = '\0';
             int argc = tokenize_input_to_argv(input_copy, argv, 100);
-            if (argc > 0 && (strcmp(argv[0], "hop") == 0 || strcmp(argv[0], "reveal") == 0))
+            if (argc > 0 && (strcmp(argv[0], "hop") == 0 || strcmp(argv[0], "reveal") == 0 || strcmp(argv[0], "log") == 0))
             {
-                /* allow these even if parser flags syntax edge-cases */
             }
             else
             {
@@ -67,26 +243,18 @@ int main(void)
             }
         }
 
-        char input_copy2[1024];
-        strncpy(input_copy2, input, sizeof(input_copy2) - 1);
-        input_copy2[1023] = '\0';
-
-        char *argv[100];
-        int argc = tokenize_input_to_argv(input_copy2, argv, 100);
-        if (argc == 0)
-            continue;
-
-        if (strcmp(argv[0], "hop") == 0)
+        char *saveptr = NULL;
+        char *cmd = strtok_r(input, ";", &saveptr);
+        while (cmd != NULL)
         {
-            hop_command(argc, argv, home_dir);
-        }
-        else if (strcmp(argv[0], "reveal") == 0)
-        {
-            reveal_command(argc, argv, home_dir);
-        }
-        else
-        {
-            printf("%s: command not found\n", argv[0]);
+            while (*cmd == ' ' || *cmd == '\t')
+                ++cmd;
+            char *end = cmd + strlen(cmd) - 1;
+            while (end > cmd && (*end == ' ' || *end == '\t'))
+                *end-- = '\0';
+            if (strlen(cmd) > 0)
+                run_shell_command(cmd, home_dir);
+            cmd = strtok_r(NULL, ";", &saveptr);
         }
     }
 
