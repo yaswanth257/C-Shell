@@ -27,6 +27,7 @@ int tokenize_input_to_argv(char *input, char *argv[], int max_args)
     return argc;
 }
 
+// ############## LLM Generated Code Begins ##############
 void run_shell_command(char *cmd, const char *home_dir)
 {
     char input_copy[MAX_CMD_LEN];
@@ -45,7 +46,6 @@ void run_shell_command(char *cmd, const char *home_dir)
         argv[--argc] = NULL;
     }
 
-    /* Validate input redirection target exists */
     for (int i = 0; argv[i]; ++i)
     {
         if (strcmp(argv[i], "<") == 0)
@@ -59,7 +59,6 @@ void run_shell_command(char *cmd, const char *home_dir)
         }
     }
 
-    /* Validate output redirection target is creatable */
     for (int i = 0; argv[i]; ++i)
     {
         if (strcmp(argv[i], ">") == 0 || strcmp(argv[i], ">>") == 0)
@@ -110,6 +109,23 @@ void run_shell_command(char *cmd, const char *home_dir)
             argv[i + 1] = NULL;
             i++;
         }
+    }
+
+    int has_pipe = 0;
+    for (int i = 0; argv[i]; ++i)
+    {
+        if (strcmp(argv[i], "|") == 0)
+        {
+            has_pipe = 1;
+            break;
+        }
+    }
+
+    if (has_pipe && strcmp(argv[0], "reveal") == 0)
+    {
+        execute_reveal_in_pipeline(argc, argv, home_dir, input_file, output_file, append);
+        intrinsics_log_store_command(cmd);
+        return;
     }
 
     if (strcmp(argv[0], "hop") == 0)
@@ -179,26 +195,51 @@ void run_shell_command(char *cmd, const char *home_dir)
         return;
     }
 
-    /* External command — single command (no pipes yet) */
-    pid_t child_pid = execute_external_command(argv, input_file, output_file, append);
-    if (child_pid < 0)
+#define MAX_PIPE_COMMANDS 10
+    char **cmd_ptrs[MAX_PIPE_COMMANDS];
+    int pipe_positions[MAX_PIPE_COMMANDS];
+    int command_count = 0;
+    pipe_positions[command_count++] = 0;
+    for (int i = 0; argv[i]; ++i)
     {
-        fprintf(stderr, "Failed to execute command\n");
-        return;
+        if (strcmp(argv[i], "|") == 0)
+        {
+            argv[i] = NULL;
+            pipe_positions[command_count++] = i + 1;
+        }
     }
 
-    if (background)
+    for (int i = 0; i < command_count; ++i)
+        cmd_ptrs[i] = &argv[pipe_positions[i]];
+
+    if (command_count == 1)
     {
-        printf("[bg] %d\n", (int)child_pid);
-        fflush(stdout);
+        pid_t child_pid = execute_external_command(argv, input_file, output_file, append);
+        if (child_pid < 0)
+        {
+            fprintf(stderr, "Failed to execute command\n");
+            return;
+        }
+
+        if (background)
+        {
+            printf("[bg] %d\n", (int)child_pid);
+            fflush(stdout);
+        }
+        else
+        {
+            int status;
+            waitpid(child_pid, &status, 0);
+            intrinsics_log_store_command(cmd);
+        }
     }
     else
     {
-        int status;
-        waitpid(child_pid, &status, 0);
+        execute_multi_command_pipeline(cmd_ptrs, command_count, input_file, output_file, append);
         intrinsics_log_store_command(cmd);
     }
 }
+// ############## LLM Generated Code Ends ################
 
 int main(void)
 {
