@@ -19,7 +19,59 @@ void run_shell_command(char *cmd, const char *home_dir);
 static char previous_dir[PATH_MAX] = "";
 static int has_previous = 0;
 
+static char command_log[MAX_LOG_CMDS][MAX_CMD_LEN];
+static int log_count = 0;
+static int log_start = 0;
+static char last_command[MAX_CMD_LEN] = "";
+static char log_file_path[PATH_MAX] = "";
+static int log_initialized = 0;
 static char shell_home_dir[PATH_MAX] = "";
+
+static void init_log_file(void)
+{
+    if (log_initialized) return;
+
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(log_file_path, sizeof(log_file_path), "%s/.shell_history", home);
+    } else {
+        strcpy(log_file_path, ".shell_history");
+    }
+
+    // Load existing history
+    FILE *file = fopen(log_file_path, "r");
+    if (file) {
+        char line[MAX_CMD_LEN];
+        while (fgets(line, sizeof(line), file) && log_count < MAX_LOG_CMDS) {
+            // Remove newline
+            line[strcspn(line, "\n")] = '\0';
+            if (strlen(line) > 0) {
+                strncpy(command_log[(log_start + log_count) % MAX_LOG_CMDS], line, MAX_CMD_LEN);
+                command_log[(log_start + log_count) % MAX_LOG_CMDS][MAX_CMD_LEN - 1] = '\0';
+                if (log_count < MAX_LOG_CMDS)
+                    log_count++;
+                else
+                    log_start = (log_start + 1) % MAX_LOG_CMDS;
+            }
+        }
+        fclose(file);
+    }
+    log_initialized = 1;
+}
+
+static void save_log_to_file(void)
+{
+    if (!log_initialized) return;
+
+    FILE *file = fopen(log_file_path, "w");
+    if (file) {
+        for (int i = 0; i < log_count; i++) {
+            int real_index = (log_start + i) % MAX_LOG_CMDS;
+            fprintf(file, "%s\n", command_log[real_index]);
+        }
+        fclose(file);
+    }
+}
 
 static void update_previous_dir(const char *dir)
 {
@@ -44,6 +96,31 @@ const char *get_previous_dir(void)
 int has_previous_dir(void)
 {
     return has_previous;
+}
+
+static void log_command_store(const char *cmd)
+{
+    init_log_file();
+
+    if (cmd == NULL || strlen(cmd) == 0)
+        return;
+    if (strncmp(cmd, "log", 3) == 0 && (cmd[3] == '\0' || cmd[3] == ' '))
+        return;
+    if (strcmp(cmd, last_command) == 0)
+        return;
+
+    strncpy(command_log[(log_start + log_count) % MAX_LOG_CMDS], cmd, MAX_CMD_LEN);
+    command_log[(log_start + log_count) % MAX_LOG_CMDS][MAX_CMD_LEN - 1] = '\0';
+
+    if (log_count < MAX_LOG_CMDS)
+        log_count++;
+    else
+        log_start = (log_start + 1) % MAX_LOG_CMDS;
+
+    strncpy(last_command, cmd, MAX_CMD_LEN);
+    last_command[MAX_CMD_LEN - 1] = '\0';
+
+    save_log_to_file();
 }
 
 static int safe_chdir(const char *new_dir)
@@ -294,13 +371,53 @@ void reveal_command(int argc, char *argv[], const char *home_dir)
     fflush(stdout);
 }
 
-/* log_command, set_shell_home_dir and intrinsics_log_store_command
-   will be completed in a later commit when the log feature is added. */
 void log_command(int argc, char *argv[])
 {
-    (void)argc;
-    (void)argv;
-    printf("log: not yet implemented\n");
+    init_log_file();
+
+    if (argc == 1)
+    {
+        for (int i = 0; i < log_count; i++)
+        {
+            int real_index = (log_start + i) % MAX_LOG_CMDS;
+            printf("%s\n", command_log[real_index]);
+        }
+        return;
+    }
+
+    if (argc == 2)
+    {
+        if (strcmp(argv[1], "purge") == 0)
+        {
+            log_start = 0;
+            log_count = 0;
+            last_command[0] = '\0';
+            save_log_to_file();
+            return;
+        }
+        printf("log: Invalid Syntax!\n");
+        return;
+    }
+
+    if (argc == 3 && strcmp(argv[1], "execute") == 0)
+    {
+        int idx = atoi(argv[2]);
+        if (idx < 1 || idx > log_count)
+        {
+            printf("Invalid Syntax!\n");
+            return;
+        }
+        int real_idx = (log_count - idx + log_start) % MAX_LOG_CMDS;
+        char cmd_to_execute[MAX_CMD_LEN];
+        strncpy(cmd_to_execute, command_log[real_idx], MAX_CMD_LEN - 1);
+        cmd_to_execute[MAX_CMD_LEN - 1] = '\0';
+
+        const char *home_to_use = (strlen(shell_home_dir) > 0) ? shell_home_dir : getenv("HOME");
+        run_shell_command(cmd_to_execute, home_to_use);
+        return;
+    }
+
+    printf("log: Invalid Syntax!\n");
 }
 
 void set_shell_home_dir(const char *home_dir)
@@ -313,5 +430,5 @@ void set_shell_home_dir(const char *home_dir)
 
 void intrinsics_log_store_command(const char *cmd)
 {
-    (void)cmd;
+    log_command_store(cmd);
 }
