@@ -7,12 +7,15 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <errno.h>
 
 #include "intrinsics.h"
 #include "prompt.h"
 #include "parser.h"
 #include "executor.h"
+#include "signals.h"
+#include "bg_jobs.h"
 
 int tokenize_input_to_argv(char *input, char *argv[], int max_args)
 {
@@ -27,6 +30,7 @@ int tokenize_input_to_argv(char *input, char *argv[], int max_args)
     return argc;
 }
 
+void run_shell_command(char *cmd, const char *home_dir);
 // ############## LLM Generated Code Begins ##############
 void run_shell_command(char *cmd, const char *home_dir)
 {
@@ -195,6 +199,125 @@ void run_shell_command(char *cmd, const char *home_dir)
         return;
     }
 
+    if (strcmp(argv[0], "activities") == 0)
+    {
+        check_bg_jobs();
+        for (int i = 0; i < bg_job_count; ++i)
+            for (int j = i + 1; j < bg_job_count; ++j)
+            {
+                char cmd1[256], cmd2[256];
+                sscanf(bg_jobs[i].command_line, "%255s", cmd1);
+                sscanf(bg_jobs[j].command_line, "%255s", cmd2);
+
+                if (strcmp(cmd1, cmd2) > 0)
+                {
+                    bg_job tmp = bg_jobs[i];
+                    bg_jobs[i] = bg_jobs[j];
+                    bg_jobs[j] = tmp;
+                }
+            }
+        for (int i = 0; i < bg_job_count; ++i)
+            printf("[%d] : %s - %s\n", (int)bg_jobs[i].pid, bg_jobs[i].command_line, bg_jobs[i].state);
+        return;
+    }
+
+    if (strcmp(argv[0], "ping") == 0)
+    {
+        if (argc != 3)
+        {
+            printf("Invalid syntax!\n");
+            return;
+        }
+
+        char *endptr;
+        long pid_val = strtol(argv[1], &endptr, 10);
+        if (*endptr != '\0' || pid_val <= 0)
+        {
+            printf("Invalid syntax!\n");
+            return;
+        }
+
+        long sig_val = strtol(argv[2], &endptr, 10);
+        if (*endptr != '\0')
+        {
+            printf("Invalid syntax!\n");
+            return;
+        }
+
+        pid_t pid = (pid_t)pid_val;
+        int sig = (int)sig_val;
+
+        if (kill(pid, 0) < 0)
+        {
+            printf("No such process found\n");
+            return;
+        }
+        if (kill(pid, sig % 32) < 0)
+        {
+            printf("No such process found\n");
+            return;
+        }
+        printf("Sent signal %d to process with pid %d\n", sig, (int)pid);
+        return;
+    }
+
+    if (strcmp(argv[0], "fg") == 0)
+    {
+        int jobnum = (argc >= 2) ? atoi(argv[1]) : -1;
+        int idx = (jobnum == -1) ? (bg_job_count - 1) : find_job_by_number(jobnum);
+        if (idx < 0 || idx >= bg_job_count)
+        {
+            printf("No such job\n");
+            return;
+        }
+        printf("%s\n", bg_jobs[idx].command_line);
+        if (strcmp(bg_jobs[idx].state, "Stopped") == 0)
+            kill(bg_jobs[idx].pid, SIGCONT);
+
+        pid_t job_pid = bg_jobs[idx].pid;
+        bg_job_remove(idx);
+
+        fg_pid = job_pid;
+        int status;
+        waitpid(fg_pid, &status, WUNTRACED);
+
+        if (WIFSTOPPED(status))
+        {
+            char cmd_name[256];
+            sscanf(cmd, "%255s", cmd_name);
+            printf("\n[%d] Stopped %s\n", next_job_number, cmd_name);
+            fflush(stdout);
+            bg_job_add(fg_pid, cmd, "Stopped");
+            if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0)
+            {
+                perror("tcsetpgrp");
+            }
+        }
+
+        fg_pid = -1;
+        return;
+    }
+
+    if (strcmp(argv[0], "bg") == 0)
+    {
+        int jobnum = (argc >= 2) ? atoi(argv[1]) : -1;
+        int idx = (jobnum == -1) ? (bg_job_count - 1) : find_job_by_number(jobnum);
+        if (idx < 0 || idx >= bg_job_count)
+        {
+            printf("No such job\n");
+            return;
+        }
+        if (strcmp(bg_jobs[idx].state, "Running") == 0)
+        {
+            printf("Job already running\n");
+            return;
+        }
+        kill(bg_jobs[idx].pid, SIGCONT);
+        strncpy(bg_jobs[idx].state, "Running", sizeof(bg_jobs[idx].state));
+        printf("[%d] %s &\n", bg_jobs[idx].job_number, bg_jobs[idx].command_line);
+        return;
+    }
+
 #define MAX_PIPE_COMMANDS 10
     char **cmd_ptrs[MAX_PIPE_COMMANDS];
     int pipe_positions[MAX_PIPE_COMMANDS];
@@ -223,13 +346,28 @@ void run_shell_command(char *cmd, const char *home_dir)
 
         if (background)
         {
-            printf("[bg] %d\n", (int)child_pid);
+            bg_job_add(child_pid, cmd, "Running");
+            printf("[%d] %d\n", next_job_number - 1, (int)child_pid);
             fflush(stdout);
         }
         else
         {
+            fg_pid = child_pid;
             int status;
-            waitpid(child_pid, &status, 0);
+            waitpid(child_pid, &status, WUNTRACED);
+            if (WIFSTOPPED(status))
+            {
+                char cmd_name[256];
+                sscanf(cmd, "%255s", cmd_name);
+                printf("\n[%d] Stopped %s\n", next_job_number, cmd_name);
+                fflush(stdout);
+                bg_job_add(child_pid, cmd, "Stopped");
+                if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0)
+                {
+                    perror("tcsetpgrp");
+                }
+            }
+            fg_pid = -1;
             intrinsics_log_store_command(cmd);
         }
     }
@@ -244,6 +382,13 @@ void run_shell_command(char *cmd, const char *home_dir)
 int main(void)
 {
     char home_dir[PATH_MAX + 1];
+    char debugdir[PATH_MAX + 1];
+
+    if (getcwd(debugdir, sizeof(debugdir)))
+    {
+        printf("[DEBUG SHELL START DIRECTORY]: %s\n", debugdir);
+        fflush(stdout);
+    }
 
     if (getcwd(home_dir, sizeof(home_dir)) == NULL)
     {
@@ -252,17 +397,30 @@ int main(void)
     }
 
     set_shell_home_dir(home_dir);
+    install_signal_handlers();
 
     while (1)
     {
+
+        check_bg_jobs();
         print_prompt(home_dir);
 
         char input[1024];
         if (fgets(input, sizeof(input), stdin) == NULL)
         {
-            break;
+            if (isatty(STDIN_FILENO))
+            {
+                for (int i = 0; i < bg_job_count; ++i)
+                    if (strcmp(bg_jobs[i].state, "Running") == 0)
+                        kill(bg_jobs[i].pid, SIGKILL);
+                printf("logout\n");
+                exit(0);
+            }
+            else
+            {
+                break;
+            }
         }
-
         input[strcspn(input, "\n")] = '\0';
         if (strlen(input) == 0)
             continue;
