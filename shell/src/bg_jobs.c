@@ -59,7 +59,6 @@ int find_job_by_pid(pid_t pid)
     }
     return -1;
 }
-// ############## LLM Generated Code Begins ##############
 void check_bg_jobs(void)
 {
     sigchld_received = 0;
@@ -116,4 +115,3 @@ void check_bg_jobs(void)
         }
     }
 }
-// ############## LLM Generated Code Ends ################

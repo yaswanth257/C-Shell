@@ -49,7 +49,6 @@ static int is_name_char(char c)
     return c != '\0' && c != '&' && c != '>' && c != '<' && c != ';' &&
            c != '|' && !isspace((unsigned char)c);
 }
-// ############## LLM Generated Code Begins ##############
 
 int tokenize_input(const char *input, parser_state_t *parser)
 {
@@ -192,7 +191,6 @@ int parse_atomic(parser_state_t *parser)
     return 0;
 }
 
-// ############## LLM Generated Code Ends ################
 int parse_cmd_group(parser_state_t *parser)
 {
     if (parse_atomic(parser) != 0)

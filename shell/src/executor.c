@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
-// ############## LLM Generated Code Begins ##############
 pid_t execute_external_command(char **argv, const char *input_file, const char *output_file, int append)
 {
     pid_t pid = fork();
@@ -56,7 +55,6 @@ pid_t execute_external_command(char **argv, const char *input_file, const char *
         return -1;
     }
 }
-// ############## LLM Generated Code Ends ################
 void execute_two_command_pipeline(char **argv1, char **argv2)
 {
     int pipefd[2];
@@ -200,7 +198,6 @@ void execute_reveal_in_pipeline(int argc, char **argv, const char *home_dir,
     waitpid(pid2, NULL, 0);
 }
 
-// ############## LLM Generated Code Begins ##############
 void execute_multi_command_pipeline(
     char ***commands,
     int count,
@@ -291,4 +288,3 @@ void execute_multi_command_pipeline(
         waitpid(pids[i], NULL, 0);
     }
 }
-// ############## LLM Generated Code Ends ################

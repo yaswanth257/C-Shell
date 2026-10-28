@@ -31,7 +31,6 @@ int tokenize_input_to_argv(char *input, char *argv[], int max_args)
 }
 
 void run_shell_command(char *cmd, const char *home_dir);
-// ############## LLM Generated Code Begins ##############
 void run_shell_command(char *cmd, const char *home_dir)
 {
     char input_copy[MAX_CMD_LEN];
@@ -377,7 +376,6 @@ void run_shell_command(char *cmd, const char *home_dir)
         intrinsics_log_store_command(cmd);
     }
 }
-// ############## LLM Generated Code Ends ################
 
 int main(void)
 {

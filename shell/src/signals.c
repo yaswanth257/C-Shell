@@ -37,12 +37,10 @@ void sigchld_handler(int sig)
 void install_signal_handlers(void)
 {
     struct sigaction sa;
-    // ############## LLM Generated Code Begins ##############
     sa.sa_handler = sigint_handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa, NULL);
-    // ############## LLM Generated Code Ends ################
 
     sa.sa_handler = sigtstp_handler;
     sigemptyset(&sa.sa_mask);
